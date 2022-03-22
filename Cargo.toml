@@ -1,0 +1,15 @@
+[package]
+name = "triangle-rs"
+version = "0.1.0"
+authors = ["maik klein <maikklein@googlemail.com>"]
+edition = "2021"
+
+[dependencies]
+winit = "0.26.1"
+image = "0.24.1"
+# The examples require the validation layers, which means the SDK or
+# equivalent development packages should be present, so we can link
+# directly and benefit from the infallible `Entry` constructor.
+ash = { version = "0.36.0", default-features = false, features = ["linked", "debug"] }
+ash-window = "0.9.1"
+shaderc = "0.7"
