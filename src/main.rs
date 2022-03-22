@@ -14,7 +14,6 @@ use std::cell::RefCell;
 use std::default::Default;
 use std::ffi::CStr;
 use std::ops::Drop;
-use std::io::Cursor;
 use std::mem::{self, align_of};
 
 use winit::{
@@ -190,16 +189,16 @@ impl App {
                 match event {
                     Event::WindowEvent {
                         event:
-                            WindowEvent::CloseRequested
-                            | WindowEvent::KeyboardInput {
-                                input:
-                                    KeyboardInput {
-                                        state: ElementState::Pressed,
-                                        virtual_keycode: Some(VirtualKeyCode::Escape),
-                                        ..
-                                    },
+                        WindowEvent::CloseRequested
+                        | WindowEvent::KeyboardInput {
+                            input:
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::Escape),
                                 ..
                             },
+                            ..
+                        },
                         ..
                     } => *control_flow = ControlFlow::Exit,
                     Event::MainEventsCleared => f(),
@@ -278,12 +277,12 @@ impl App {
                             let supports_graphic_and_surface =
                                 info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
                                     && surface_loader
-                                        .get_physical_device_surface_support(
-                                            *pdevice,
-                                            index as u32,
-                                            surface,
-                                        )
-                                        .unwrap();
+                                    .get_physical_device_surface_support(
+                                        *pdevice,
+                                        index as u32,
+                                        surface,
+                                    )
+                                    .unwrap();
                             if supports_graphic_and_surface {
                                 Some((*pdevice, index))
                             } else {
@@ -431,7 +430,7 @@ impl App {
                 &device_memory_properties,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
             )
-            .expect("Unable to find suitable memory index for depth image.");
+                .expect("Unable to find suitable memory index for depth image.");
 
             let depth_image_allocate_info = vk::MemoryAllocateInfo::builder()
                 .allocation_size(depth_image_memory_req.size)
@@ -643,7 +642,7 @@ fn main() {
             &base.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
-        .expect("Unable to find suitable memorytype for the index buffer.");
+            .expect("Unable to find suitable memorytype for the index buffer.");
 
         let index_allocate_info = vk::MemoryAllocateInfo {
             allocation_size: index_buffer_memory_req.size,
@@ -695,7 +694,7 @@ fn main() {
             &base.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
-        .expect("Unable to find suitable memorytype for the vertex buffer.");
+            .expect("Unable to find suitable memorytype for the vertex buffer.");
 
         let vertex_buffer_allocate_info = vk::MemoryAllocateInfo {
             allocation_size: vertex_input_buffer_memory_req.size,
@@ -743,17 +742,15 @@ fn main() {
         base.device
             .bind_buffer_memory(vertex_input_buffer, vertex_input_buffer_memory, 0)
             .unwrap();
-        let mut vertex_spv_file =
-            Cursor::new(&include_bytes!("../shader/vert.spv")[..]);
-        let mut frag_spv_file = Cursor::new(&include_bytes!("../shader/frag.spv")[..]);
 
-        let vertex_code =
-            read_spv(&mut vertex_spv_file).expect("Failed to read vertex shader spv file");
-        let vertex_shader_info = vk::ShaderModuleCreateInfo::builder().code(&vertex_code);
 
-        let frag_code =
-            read_spv(&mut frag_spv_file).expect("Failed to read fragment shader spv file");
-        let frag_shader_info = vk::ShaderModuleCreateInfo::builder().code(&frag_code);
+        let vertex_shader_info = vk::ShaderModuleCreateInfo::builder().code(
+            vk_shader_macros::include_glsl!("shader/triangle.vert", kind: vert)
+        );
+
+        let frag_shader_info = vk::ShaderModuleCreateInfo::builder().code(
+            vk_shader_macros::include_glsl!("shader/triangle.frag")
+        );
 
         let vertex_shader_module = base
             .device
