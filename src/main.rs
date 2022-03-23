@@ -560,10 +560,10 @@ struct Vertex {
 
 fn main() {
     unsafe {
-        let base = App::new(1920, 1080);
+        let app = App::new(1920, 1080);
         let renderpass_attachments = [
             vk::AttachmentDescription {
-                format: base.surface_format.format,
+                format: app.surface_format.format,
                 samples: vk::SampleCountFlags::TYPE_1,
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::STORE,
@@ -606,24 +606,24 @@ fn main() {
             .subpasses(std::slice::from_ref(&subpass))
             .dependencies(&dependencies);
 
-        let renderpass = base
+        let renderpass = app
             .device
             .create_render_pass(&renderpass_create_info, None)
             .unwrap();
 
-        let framebuffers: Vec<vk::Framebuffer> = base
+        let framebuffers: Vec<vk::Framebuffer> = app
             .present_image_views
             .iter()
             .map(|&present_image_view| {
-                let framebuffer_attachments = [present_image_view, base.depth_image_view];
+                let framebuffer_attachments = [present_image_view, app.depth_image_view];
                 let frame_buffer_create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(renderpass)
                     .attachments(&framebuffer_attachments)
-                    .width(base.surface_resolution.width)
-                    .height(base.surface_resolution.height)
+                    .width(app.surface_resolution.width)
+                    .height(app.surface_resolution.height)
                     .layers(1);
 
-                base.device
+                app.device
                     .create_framebuffer(&frame_buffer_create_info, None)
                     .unwrap()
             })
@@ -635,11 +635,11 @@ fn main() {
             .usage(vk::BufferUsageFlags::INDEX_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let index_buffer = base.device.create_buffer(&index_buffer_info, None).unwrap();
-        let index_buffer_memory_req = base.device.get_buffer_memory_requirements(index_buffer);
+        let index_buffer = app.device.create_buffer(&index_buffer_info, None).unwrap();
+        let index_buffer_memory_req = app.device.get_buffer_memory_requirements(index_buffer);
         let index_buffer_memory_index = find_memorytype_index(
             &index_buffer_memory_req,
-            &base.device_memory_properties,
+            &app.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
             .expect("Unable to find suitable memorytype for the index buffer.");
@@ -649,11 +649,11 @@ fn main() {
             memory_type_index: index_buffer_memory_index,
             ..Default::default()
         };
-        let index_buffer_memory = base
+        let index_buffer_memory = app
             .device
             .allocate_memory(&index_allocate_info, None)
             .unwrap();
-        let index_ptr = base
+        let index_ptr = app
             .device
             .map_memory(
                 index_buffer_memory,
@@ -668,8 +668,8 @@ fn main() {
             index_buffer_memory_req.size,
         );
         index_slice.copy_from_slice(&index_buffer_data);
-        base.device.unmap_memory(index_buffer_memory);
-        base.device
+        app.device.unmap_memory(index_buffer_memory);
+        app.device
             .bind_buffer_memory(index_buffer, index_buffer_memory, 0)
             .unwrap();
 
@@ -680,18 +680,18 @@ fn main() {
             ..Default::default()
         };
 
-        let vertex_input_buffer = base
+        let vertex_input_buffer = app
             .device
             .create_buffer(&vertex_input_buffer_info, None)
             .unwrap();
 
-        let vertex_input_buffer_memory_req = base
+        let vertex_input_buffer_memory_req = app
             .device
             .get_buffer_memory_requirements(vertex_input_buffer);
 
         let vertex_input_buffer_memory_index = find_memorytype_index(
             &vertex_input_buffer_memory_req,
-            &base.device_memory_properties,
+            &app.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
             .expect("Unable to find suitable memorytype for the vertex buffer.");
@@ -702,7 +702,7 @@ fn main() {
             ..Default::default()
         };
 
-        let vertex_input_buffer_memory = base
+        let vertex_input_buffer_memory = app
             .device
             .allocate_memory(&vertex_buffer_allocate_info, None)
             .unwrap();
@@ -722,7 +722,7 @@ fn main() {
             },
         ];
 
-        let vert_ptr = base
+        let vert_ptr = app
             .device
             .map_memory(
                 vertex_input_buffer_memory,
@@ -738,8 +738,8 @@ fn main() {
             vertex_input_buffer_memory_req.size,
         );
         vert_align.copy_from_slice(&vertices);
-        base.device.unmap_memory(vertex_input_buffer_memory);
-        base.device
+        app.device.unmap_memory(vertex_input_buffer_memory);
+        app.device
             .bind_buffer_memory(vertex_input_buffer, vertex_input_buffer_memory, 0)
             .unwrap();
 
@@ -752,19 +752,19 @@ fn main() {
             vk_shader_macros::include_glsl!("shader/triangle.frag")
         );
 
-        let vertex_shader_module = base
+        let vertex_shader_module = app
             .device
             .create_shader_module(&vertex_shader_info, None)
             .expect("Vertex shader module error");
 
-        let fragment_shader_module = base
+        let fragment_shader_module = app
             .device
             .create_shader_module(&frag_shader_info, None)
             .expect("Fragment shader module error");
 
         let layout_create_info = vk::PipelineLayoutCreateInfo::default();
 
-        let pipeline_layout = base
+        let pipeline_layout = app
             .device
             .create_pipeline_layout(&layout_create_info, None)
             .unwrap();
@@ -815,12 +815,12 @@ fn main() {
         let viewports = [vk::Viewport {
             x: 0.0,
             y: 0.0,
-            width: base.surface_resolution.width as f32,
-            height: base.surface_resolution.height as f32,
+            width: app.surface_resolution.width as f32,
+            height: app.surface_resolution.height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         }];
-        let scissors = [base.surface_resolution.into()];
+        let scissors = [app.surface_resolution.into()];
         let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
             .scissors(&scissors)
             .viewports(&viewports);
@@ -882,7 +882,7 @@ fn main() {
             .layout(pipeline_layout)
             .render_pass(renderpass);
 
-        let graphics_pipelines = base
+        let graphics_pipelines = app
             .device
             .create_graphics_pipelines(
                 vk::PipelineCache::null(),
@@ -893,13 +893,13 @@ fn main() {
 
         let graphic_pipeline = graphics_pipelines[0];
 
-        base.render_loop(|| {
-            let (present_index, _) = base
+        app.render_loop(|| {
+            let (present_index, _) = app
                 .swapchain_loader
                 .acquire_next_image(
-                    base.swapchain,
+                    app.swapchain,
                     u64::MAX,
-                    base.present_complete_semaphore,
+                    app.present_complete_semaphore,
                     vk::Fence::null(),
                 )
                 .unwrap();
@@ -920,17 +920,17 @@ fn main() {
             let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
                 .render_pass(renderpass)
                 .framebuffer(framebuffers[present_index as usize])
-                .render_area(base.surface_resolution.into())
+                .render_area(app.surface_resolution.into())
                 .clear_values(&clear_values);
 
             record_submit_commandbuffer(
-                &base.device,
-                base.draw_command_buffer,
-                base.draw_commands_reuse_fence,
-                base.present_queue,
+                &app.device,
+                app.draw_command_buffer,
+                app.draw_commands_reuse_fence,
+                app.present_queue,
                 &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
-                &[base.present_complete_semaphore],
-                &[base.rendering_complete_semaphore],
+                &[app.present_complete_semaphore],
+                &[app.rendering_complete_semaphore],
                 |device, draw_command_buffer| {
                     device.cmd_begin_render_pass(
                         draw_command_buffer,
@@ -970,36 +970,36 @@ fn main() {
                 },
             );
             //let mut present_info_err = mem::zeroed();
-            let wait_semaphors = [base.rendering_complete_semaphore];
-            let swapchains = [base.swapchain];
+            let wait_semaphors = [app.rendering_complete_semaphore];
+            let swapchains = [app.swapchain];
             let image_indices = [present_index];
             let present_info = vk::PresentInfoKHR::builder()
                 .wait_semaphores(&wait_semaphors) // &base.rendering_complete_semaphore)
                 .swapchains(&swapchains)
                 .image_indices(&image_indices);
 
-            base.swapchain_loader
-                .queue_present(base.present_queue, &present_info)
+            app.swapchain_loader
+                .queue_present(app.present_queue, &present_info)
                 .unwrap();
         });
 
-        base.device.device_wait_idle().unwrap();
+        app.device.device_wait_idle().unwrap();
         for pipeline in graphics_pipelines {
-            base.device.destroy_pipeline(pipeline, None);
+            app.device.destroy_pipeline(pipeline, None);
         }
-        base.device.destroy_pipeline_layout(pipeline_layout, None);
-        base.device
+        app.device.destroy_pipeline_layout(pipeline_layout, None);
+        app.device
             .destroy_shader_module(vertex_shader_module, None);
-        base.device
+        app.device
             .destroy_shader_module(fragment_shader_module, None);
-        base.device.free_memory(index_buffer_memory, None);
-        base.device.destroy_buffer(index_buffer, None);
-        base.device.free_memory(vertex_input_buffer_memory, None);
-        base.device.destroy_buffer(vertex_input_buffer, None);
+        app.device.free_memory(index_buffer_memory, None);
+        app.device.destroy_buffer(index_buffer, None);
+        app.device.free_memory(vertex_input_buffer_memory, None);
+        app.device.destroy_buffer(vertex_input_buffer, None);
         for framebuffer in framebuffers {
-            base.device.destroy_framebuffer(framebuffer, None);
+            app.device.destroy_framebuffer(framebuffer, None);
         }
-        base.device.destroy_render_pass(renderpass, None);
+        app.device.destroy_render_pass(renderpass, None);
     }
 }
 
