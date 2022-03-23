@@ -6,15 +6,15 @@ use ash::extensions::{
     khr::{Surface, Swapchain},
 };
 
-use ash::{vk, Entry};
 use ash::util::*;
+use ash::{vk, Entry};
 pub use ash::{Device, Instance};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::default::Default;
 use std::ffi::CStr;
-use std::ops::Drop;
 use std::mem::{self, align_of};
+use std::ops::Drop;
 
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
@@ -189,16 +189,16 @@ impl App {
                 match event {
                     Event::WindowEvent {
                         event:
-                        WindowEvent::CloseRequested
-                        | WindowEvent::KeyboardInput {
-                            input:
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Escape),
+                            WindowEvent::CloseRequested
+                            | WindowEvent::KeyboardInput {
+                                input:
+                                    KeyboardInput {
+                                        state: ElementState::Pressed,
+                                        virtual_keycode: Some(VirtualKeyCode::Escape),
+                                        ..
+                                    },
                                 ..
                             },
-                            ..
-                        },
                         ..
                     } => *control_flow = ControlFlow::Exit,
                     Event::MainEventsCleared => f(),
@@ -277,12 +277,12 @@ impl App {
                             let supports_graphic_and_surface =
                                 info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
                                     && surface_loader
-                                    .get_physical_device_surface_support(
-                                        *pdevice,
-                                        index as u32,
-                                        surface,
-                                    )
-                                    .unwrap();
+                                        .get_physical_device_surface_support(
+                                            *pdevice,
+                                            index as u32,
+                                            surface,
+                                        )
+                                        .unwrap();
                             if supports_graphic_and_surface {
                                 Some((*pdevice, index))
                             } else {
@@ -430,7 +430,7 @@ impl App {
                 &device_memory_properties,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
             )
-                .expect("Unable to find suitable memory index for depth image.");
+            .expect("Unable to find suitable memory index for depth image.");
 
             let depth_image_allocate_info = vk::MemoryAllocateInfo::builder()
                 .allocation_size(depth_image_memory_req.size)
@@ -551,7 +551,6 @@ impl App {
     }
 }
 
-
 #[derive(Clone, Debug, Copy)]
 struct Vertex {
     pos: [f32; 4],
@@ -642,7 +641,7 @@ fn main() {
             &app.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
-            .expect("Unable to find suitable memorytype for the index buffer.");
+        .expect("Unable to find suitable memorytype for the index buffer.");
 
         let index_allocate_info = vk::MemoryAllocateInfo {
             allocation_size: index_buffer_memory_req.size,
@@ -694,7 +693,7 @@ fn main() {
             &app.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
-            .expect("Unable to find suitable memorytype for the vertex buffer.");
+        .expect("Unable to find suitable memorytype for the vertex buffer.");
 
         let vertex_buffer_allocate_info = vk::MemoryAllocateInfo {
             allocation_size: vertex_input_buffer_memory_req.size,
@@ -743,14 +742,12 @@ fn main() {
             .bind_buffer_memory(vertex_input_buffer, vertex_input_buffer_memory, 0)
             .unwrap();
 
-
         let vertex_shader_info = vk::ShaderModuleCreateInfo::builder().code(
-            vk_shader_macros::include_glsl!("shader/triangle.vert", kind: vert)
+            vk_shader_macros::include_glsl!("shader/triangle.vert", kind: vert),
         );
 
-        let frag_shader_info = vk::ShaderModuleCreateInfo::builder().code(
-            vk_shader_macros::include_glsl!("shader/triangle.frag")
-        );
+        let frag_shader_info = vk::ShaderModuleCreateInfo::builder()
+            .code(vk_shader_macros::include_glsl!("shader/triangle.frag"));
 
         let vertex_shader_module = app
             .device
@@ -988,8 +985,7 @@ fn main() {
             app.device.destroy_pipeline(pipeline, None);
         }
         app.device.destroy_pipeline_layout(pipeline_layout, None);
-        app.device
-            .destroy_shader_module(vertex_shader_module, None);
+        app.device.destroy_shader_module(vertex_shader_module, None);
         app.device
             .destroy_shader_module(fragment_shader_module, None);
         app.device.free_memory(index_buffer_memory, None);
