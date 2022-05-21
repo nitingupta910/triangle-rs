@@ -16,15 +16,15 @@ checksum = "aae1277d39aeec15cb388266ecc24b11c80469deae6067e17a1a7aa9e5c1f234"
 
 [[package]]
 name = "ash"
-version = "0.36.0+1.3.206"
+version = "0.37.0+1.3.209"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ceea9c64653169f33f946debf0a41568afc4e23a4c37d29004a23b2ffbfb4034"
+checksum = "006ca68e0f2b03f22d6fa9f2860f85aed430d257fec20f8879b2145e7c7ae1a6"
 
 [[package]]
 name = "ash-window"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed540473cca5a9a40466521ec2fd0cfe5083173bf736a15a4580be523842ff93"
+checksum = "4e199a4119a1695c8d865b3f5d6c1ee164370c0c5bc91c8284cf79b0f0be78ba"
 dependencies = [
  "ash",
  "raw-window-handle 0.3.4",
@@ -362,9 +362,9 @@ checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
 
 [[package]]
 name = "exr"
-version = "1.4.1"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4badb9489a465cb2c555af1f00f0bfd8cecd6fc12ac11da9d5b40c5dd5f0200"
+checksum = "14cc0e06fb5f67e5d6beadf3a382fec9baca1aa751c6d5368fdeee7e5932c215"
 dependencies = [
  "bit_field",
  "deflate",
@@ -480,9 +480,9 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "image"
-version = "0.24.1"
+version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db207d030ae38f1eb6f240d5a1c1c88ff422aa005d10f8c6c6fc5e75286ab30e"
+checksum = "28edd9d7bc256be2502e325ac0628bde30b7001b9b52e0abe31a1a9dc2701212"
 dependencies = [
  "bytemuck",
  "byteorder",
@@ -937,12 +937,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-hack"
-version = "0.5.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbf0c48bc1d91375ae5c3cd81e3722dff1abcf81a30960240640d223f59fe0e5"
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -953,9 +947,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.16"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4af2ec4714533fcdf07e886f17025ace8b997b9ce51204ee69b6da831c3da57"
+checksum = "a1feb54ed693b93a84e14094943b84b7c4eae204c512b7ccb95ab0c66d278ad1"
 dependencies = [
  "proc-macro2",
 ]
@@ -1188,21 +1182,10 @@ checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
 
 [[package]]
 name = "vk-shader-macros"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abaf1283f4b9a883cd0b7f9c52334442d22775668d8ad7fbe68c2d0118bc3f91"
+checksum = "7ad93fbaed5e683907b3ebcac278334d4cd98be7d7478fa04ca6758fc5b68cad"
 dependencies = [
- "proc-macro-hack",
- "vk-shader-macros-impl",
-]
-
-[[package]]
-name = "vk-shader-macros-impl"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5e6ec491f3dd862cc1bcd8900181693472c1e34bf4ec3d20fb9447f4d4ba5ba"
-dependencies = [
- "proc-macro-hack",
  "proc-macro2",
  "quote",
  "shaderc",
