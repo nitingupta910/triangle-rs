@@ -1,6 +1,8 @@
 use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::{Surface, Swapchain};
-use ash::vk::{PhysicalDevice, Queue, SurfaceKHR, SwapchainKHR};
+use ash::vk::{
+    ComponentSwizzle, ImageSubresourceRange, PhysicalDevice, Queue, SurfaceKHR, SwapchainKHR,
+};
 use ash::{vk, Device, Entry, Instance};
 use std::borrow::Cow;
 use std::ffi::CStr;
@@ -14,7 +16,20 @@ use winit::{
 const WINDOW_WIDTH: u32 = 1080;
 const WINDOW_HEIGHT: u32 = 768;
 
-struct Context {}
+struct PerFrame {}
+
+struct Context {
+    entry: Entry,
+    instance: Instance,
+    physical_device: PhysicalDevice,
+    device: Device,
+    surface_loader: Surface,
+    surface: SurfaceKHR,
+    swapchain_loader: Swapchain,
+    swapchain: Option<SwapchainKHR>,
+    swapchain_image_views: Vec<vk::ImageView>,
+    per_frame: Vec<PerFrame>,
+}
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -154,19 +169,19 @@ unsafe fn init_device(
     (pdevice, device, present_queue)
 }
 
-unsafe fn init_swapchain(
-    instance: &Instance,
-    physical_device: &PhysicalDevice,
-    device: &Device,
-    surface_loader: &Surface,
-    surface: &SurfaceKHR,
-) -> SwapchainKHR {
-    let surface_format = surface_loader
-        .get_physical_device_surface_formats(*physical_device, *surface)
+fn teardown_per_frame(context: &mut Context, frame_index: usize) {}
+
+fn init_per_frame(context: &mut Context, frame_index: usize) {}
+
+unsafe fn init_swapchain(context: &mut Context) {
+    let surface_format = context
+        .surface_loader
+        .get_physical_device_surface_formats(context.physical_device, context.surface)
         .unwrap()[0];
 
-    let surface_capabilities = surface_loader
-        .get_physical_device_surface_capabilities(*physical_device, *surface)
+    let surface_capabilities = context
+        .surface_loader
+        .get_physical_device_surface_capabilities(context.physical_device, context.surface)
         .unwrap();
     let mut desired_image_count = surface_capabilities.min_image_count + 1;
     if surface_capabilities.max_image_count > 0
@@ -189,18 +204,18 @@ unsafe fn init_swapchain(
     } else {
         surface_capabilities.current_transform
     };
-    let present_modes = surface_loader
-        .get_physical_device_surface_present_modes(*physical_device, *surface)
+    let present_modes = context
+        .surface_loader
+        .get_physical_device_surface_present_modes(context.physical_device, context.surface)
         .unwrap();
     let present_mode = present_modes
         .iter()
         .cloned()
         .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
         .unwrap_or(vk::PresentModeKHR::FIFO);
-    let swapchain_loader = Swapchain::new(&instance, &device);
 
     let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
-        .surface(*surface)
+        .surface(context.surface)
         .min_image_count(desired_image_count)
         .image_color_space(surface_format.color_space)
         .image_format(surface_format.format)
@@ -212,11 +227,76 @@ unsafe fn init_swapchain(
         .present_mode(present_mode)
         .clipped(true)
         .image_array_layers(1);
-    // FIXME: add old_swapchain
 
-    swapchain_loader
+    let old_swapchain = context.swapchain;
+    let swapchain = context
+        .swapchain_loader
         .create_swapchain(&swapchain_create_info, None)
-        .unwrap()
+        .unwrap();
+    context.swapchain = Some(swapchain);
+
+    if old_swapchain.is_some() {
+        let old_swapchain = old_swapchain.unwrap();
+        for image_view in &context.swapchain_image_views {
+            context.device.destroy_image_view(*image_view, None);
+        }
+
+        let swapchain_images = context
+            .swapchain_loader
+            .get_swapchain_images(old_swapchain)
+            .unwrap();
+        let image_count = swapchain_images.len();
+
+        for i in 0..image_count {
+            teardown_per_frame(context, i);
+        }
+
+        context.swapchain_image_views.clear();
+        context
+            .swapchain_loader
+            .destroy_swapchain(old_swapchain, None);
+    }
+
+    let swapchain_images = context
+        .swapchain_loader
+        .get_swapchain_images(swapchain)
+        .unwrap();
+    let image_count = swapchain_images.len();
+    context.per_frame.clear();
+    context.per_frame.reserve(image_count);
+
+    for i in 0..image_count {
+        init_per_frame(context, i);
+    }
+
+    for i in 0..image_count {
+        // Create an image view which we can render into.
+        let create_info = vk::ImageViewCreateInfo::builder()
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(surface_format.format)
+            .image(swapchain_images[i])
+            .subresource_range(
+                ImageSubresourceRange::builder()
+                    .level_count(1)
+                    .layer_count(1)
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .build(),
+            )
+            .components(
+                vk::ComponentMapping::builder()
+                    .r(ComponentSwizzle::R)
+                    .g(ComponentSwizzle::G)
+                    .b(ComponentSwizzle::B)
+                    .a(ComponentSwizzle::A)
+                    .build(),
+            );
+
+        let image_view = context
+            .device
+            .create_image_view(&create_info, None)
+            .unwrap();
+        context.swapchain_image_views.push(image_view);
+    }
 }
 
 impl Context {
@@ -225,19 +305,27 @@ impl Context {
             let entry = Entry::linked();
             let instance = init_instance(&entry, &window);
             let surface = ash_window::create_surface(&entry, &instance, window, None).unwrap();
-            let surface_loader = ash::extensions::khr::Surface::new(&entry, &instance);
+            let surface_loader = Surface::new(&entry, &instance);
             let (physical_device, device, queue) =
                 init_device(&instance, &surface, &surface_loader);
-            let swapchain = init_swapchain(
-                &instance,
-                &physical_device,
-                &device,
-                &surface_loader,
-                &surface,
-            );
-        }
+            let swapchain_loader = Swapchain::new(&instance, &device);
 
-        Context {}
+            let mut context = Context {
+                entry,
+                instance,
+                physical_device,
+                device,
+                surface_loader,
+                surface,
+                swapchain_loader,
+                swapchain: None,
+                swapchain_image_views: vec![],
+                per_frame: vec![],
+            };
+
+            let swapchain = init_swapchain(&mut context);
+            context
+        }
     }
 }
 
