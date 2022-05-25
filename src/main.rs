@@ -27,6 +27,7 @@ struct Context {
     device: Device,
     surface_loader: Surface,
     surface: SurfaceKHR,
+    surface_resolution: vk::Extent2D,
     swapchain_loader: Swapchain,
     swapchain: SwapchainKHR,
     swapchain_image_views: Vec<vk::ImageView>,
@@ -204,6 +205,8 @@ unsafe fn init_swapchain(context: &mut Context) {
         },
         _ => surface_capabilities.current_extent,
     };
+    context.surface_resolution = surface_resolution;
+
     let pre_transform = if surface_capabilities
         .supported_transforms
         .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
@@ -482,6 +485,22 @@ unsafe fn init_pipeline(context: &mut Context) {
         .destroy_shader_module(fragment_shader_module, None);
 }
 
+unsafe fn init_framebuffers(context: &mut Context) {
+    // Create framebuffer for each swapchain image view
+    for image_view in &context.swapchain_image_views {
+        let attachments = [*image_view];
+        let fb_info = vk::FramebufferCreateInfo::builder()
+            .render_pass(context.render_pass)
+            .attachments(&attachments)
+            .width(context.surface_resolution.width)
+            .height(context.surface_resolution.height)
+            .layers(1);
+
+        let fb = context.device.create_framebuffer(&fb_info, None).unwrap();
+        context.swapchain_framebuffers.push(fb);
+    }
+}
+
 impl Context {
     fn new(window: &Window) -> Context {
         unsafe {
@@ -500,6 +519,7 @@ impl Context {
                 device,
                 surface_loader,
                 surface,
+                surface_resolution: vk::Extent2D::default(),
                 swapchain_loader,
                 swapchain: SwapchainKHR::null(),
                 swapchain_image_views: vec![],
@@ -514,6 +534,7 @@ impl Context {
             init_swapchain(&mut context);
             init_render_pass(&mut context);
             init_pipeline(&mut context);
+            init_framebuffers(&mut context);
             context
         }
     }
