@@ -1,11 +1,13 @@
 use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::{Surface, Swapchain};
 use ash::vk::{
-    ComponentSwizzle, ImageSubresourceRange, PhysicalDevice, Queue, SurfaceKHR, SwapchainKHR,
+    ComponentSwizzle, Format, ImageSubresourceRange, PhysicalDevice, Pipeline, PipelineLayout,
+    Queue, RenderPass, SurfaceFormatKHR, SurfaceKHR, SwapchainKHR,
 };
 use ash::{vk, Device, Entry, Instance};
 use std::borrow::Cow;
 use std::ffi::CStr;
+use std::mem::MaybeUninit;
 use winit::window::Window;
 use winit::{
     event::{Event, WindowEvent},
@@ -26,9 +28,14 @@ struct Context {
     surface_loader: Surface,
     surface: SurfaceKHR,
     swapchain_loader: Swapchain,
-    swapchain: Option<SwapchainKHR>,
+    swapchain: SwapchainKHR,
     swapchain_image_views: Vec<vk::ImageView>,
+    surface_format: Option<SurfaceFormatKHR>,
     per_frame: Vec<PerFrame>,
+    render_pass: RenderPass,
+    pipeline: Pipeline,
+    pipeline_layout: PipelineLayout,
+    swapchain_framebuffers: Vec<vk::Framebuffer>,
 }
 
 unsafe extern "system" fn vulkan_debug_callback(
@@ -178,6 +185,7 @@ unsafe fn init_swapchain(context: &mut Context) {
         .surface_loader
         .get_physical_device_surface_formats(context.physical_device, context.surface)
         .unwrap()[0];
+    context.surface_format = Some(surface_format);
 
     let surface_capabilities = context
         .surface_loader
@@ -229,14 +237,13 @@ unsafe fn init_swapchain(context: &mut Context) {
         .image_array_layers(1);
 
     let old_swapchain = context.swapchain;
-    let swapchain = context
+
+    context.swapchain = context
         .swapchain_loader
         .create_swapchain(&swapchain_create_info, None)
         .unwrap();
-    context.swapchain = Some(swapchain);
 
-    if old_swapchain.is_some() {
-        let old_swapchain = old_swapchain.unwrap();
+    if old_swapchain != SwapchainKHR::null() {
         for image_view in &context.swapchain_image_views {
             context.device.destroy_image_view(*image_view, None);
         }
@@ -259,7 +266,7 @@ unsafe fn init_swapchain(context: &mut Context) {
 
     let swapchain_images = context
         .swapchain_loader
-        .get_swapchain_images(swapchain)
+        .get_swapchain_images(context.swapchain)
         .unwrap();
     let image_count = swapchain_images.len();
     context.per_frame.clear();
@@ -299,6 +306,182 @@ unsafe fn init_swapchain(context: &mut Context) {
     }
 }
 
+unsafe fn init_render_pass(context: &mut Context) {
+    let surface_format = context.surface_format.unwrap();
+    let attachments = [vk::AttachmentDescription::builder()
+        // Backbuffer format.
+        .format(surface_format.format)
+        // Not multisampled.
+        .samples(vk::SampleCountFlags::TYPE_1)
+        // When starting the frame, we want tiles to be cleared.
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        // When ending the frame, we want tiles to be written out.
+        .store_op(vk::AttachmentStoreOp::STORE)
+        // Don't care about stencil since we're not using it.
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        // The image layout will be undefined when the render pass begins.
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        // After the render pass is complete, we will transition to PRESENT_SRC_KHR layout.
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+        .build()];
+
+    // We have one subpass. This subpass has one color attachment.
+    // While executing this subpass, the attachment will be in attachment optimal layout.
+    let color_refs = [vk::AttachmentReference::builder()
+        .attachment(0)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .build()];
+
+    // We will end up with two transitions.
+    // The first one happens right before we start subpass #0, where
+    // UNDEFINED is transitioned into COLOR_ATTACHMENT_OPTIMAL.
+    // The final layout in the render pass attachment states PRESENT_SRC_KHR, so we
+    // will get a final transition from COLOR_ATTACHMENT_OPTIMAL to PRESENT_SRC_KHR.
+    let subpasses = [vk::SubpassDescription::builder()
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        .color_attachments(&color_refs)
+        .build()];
+
+    // Create a dependency to external events.
+    // We need to wait for the WSI semaphore to signal.
+    // Only pipeline stages which depend on COLOR_ATTACHMENT_OUTPUT_BIT will
+    // actually wait for the semaphore, so we must also wait for that pipeline stage.
+    let dependencies = [vk::SubpassDependency::builder()
+        .src_subpass(vk::SUBPASS_EXTERNAL)
+        .dst_subpass(0)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        // Since we changed the image layout, we need to make the memory visible to
+        // color attachment to modify.
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+        )
+        .build()];
+
+    let rp_info = vk::RenderPassCreateInfo::builder()
+        .attachments(&attachments)
+        .subpasses(&subpasses)
+        .dependencies(&dependencies);
+
+    context.render_pass = context.device.create_render_pass(&rp_info, None).unwrap();
+}
+
+/**
+ * @brief Initializes the Vulkan pipeline.
+ * @param context A Vulkan context with a device and a render pass already set up.
+ */
+unsafe fn init_pipeline(context: &mut Context) {
+    // Create a blank pipeline layout.
+    // We are not binding any resources to the pipeline in this first sample.
+    let layout_info = vk::PipelineLayoutCreateInfo::default();
+    context.pipeline_layout = context
+        .device
+        .create_pipeline_layout(&layout_info, None)
+        .unwrap();
+
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default();
+
+    // Specify we will use triangle lists to draw geometry.
+    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::builder()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+
+    // Specify rasterization state.
+    let raster = vk::PipelineRasterizationStateCreateInfo::builder()
+        .cull_mode(vk::CullModeFlags::BACK)
+        .front_face(vk::FrontFace::CLOCKWISE)
+        .line_width(1.0);
+
+    // Our attachment will write to all color channels, but no blending is enabled.
+    let blend_attachments = [vk::PipelineColorBlendAttachmentState::builder()
+        .color_write_mask(vk::ColorComponentFlags::RGBA)
+        .build()];
+
+    let blend = vk::PipelineColorBlendStateCreateInfo::builder()
+        .attachments(&blend_attachments)
+        .build();
+
+    let viewport = vk::PipelineViewportStateCreateInfo::builder()
+        .viewport_count(1)
+        .scissor_count(1)
+        .build();
+
+    // Disable all depth testing.
+    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default();
+
+    // No multisampling.
+    let multisample = vk::PipelineMultisampleStateCreateInfo::builder()
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+    let dynamic = vk::PipelineDynamicStateCreateInfo::builder()
+        // Specify that these states will be dynamic, i.e. not part of pipeline state object.
+        .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]);
+
+    // Load our SPIR-V shaders.
+    let vertex_shader_info = vk::ShaderModuleCreateInfo::builder().code(
+        vk_shader_macros::include_glsl!("shader/triangle.vert", kind: vert),
+    );
+
+    let frag_shader_info = vk::ShaderModuleCreateInfo::builder()
+        .code(vk_shader_macros::include_glsl!("shader/triangle.frag"));
+
+    let vertex_shader_module = context
+        .device
+        .create_shader_module(&vertex_shader_info, None)
+        .expect("Vertex shader module error");
+
+    let fragment_shader_module = context
+        .device
+        .create_shader_module(&frag_shader_info, None)
+        .expect("Fragment shader module error");
+
+    let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+    let shader_stage_create_infos = [
+        vk::PipelineShaderStageCreateInfo {
+            module: vertex_shader_module,
+            p_name: shader_entry_name.as_ptr(),
+            stage: vk::ShaderStageFlags::VERTEX,
+            ..Default::default()
+        },
+        vk::PipelineShaderStageCreateInfo {
+            s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+            module: fragment_shader_module,
+            p_name: shader_entry_name.as_ptr(),
+            stage: vk::ShaderStageFlags::FRAGMENT,
+            ..Default::default()
+        },
+    ];
+
+    let pipe = [vk::GraphicsPipelineCreateInfo::builder()
+        .stages(&shader_stage_create_infos)
+        .vertex_input_state(&vertex_input)
+        .input_assembly_state(&input_assembly)
+        .rasterization_state(&raster)
+        .color_blend_state(&blend)
+        .multisample_state(&multisample)
+        .viewport_state(&viewport)
+        .depth_stencil_state(&depth_stencil)
+        .dynamic_state(&dynamic)
+        // We need to specify the pipeline layout and the render pass description up front as well.
+        .render_pass(context.render_pass)
+        .layout(context.pipeline_layout)
+        .build()];
+
+    context.pipeline = context
+        .device
+        .create_graphics_pipelines(vk::PipelineCache::default(), &pipe, None)
+        .unwrap()[0];
+
+    context
+        .device
+        .destroy_shader_module(vertex_shader_module, None);
+
+    context
+        .device
+        .destroy_shader_module(fragment_shader_module, None);
+}
+
 impl Context {
     fn new(window: &Window) -> Context {
         unsafe {
@@ -318,12 +501,19 @@ impl Context {
                 surface_loader,
                 surface,
                 swapchain_loader,
-                swapchain: None,
+                swapchain: SwapchainKHR::null(),
                 swapchain_image_views: vec![],
+                surface_format: None,
                 per_frame: vec![],
+                render_pass: RenderPass::null(),
+                pipeline: Pipeline::null(),
+                pipeline_layout: PipelineLayout::null(),
+                swapchain_framebuffers: vec![],
             };
 
-            let swapchain = init_swapchain(&mut context);
+            init_swapchain(&mut context);
+            init_render_pass(&mut context);
+            init_pipeline(&mut context);
             context
         }
     }
