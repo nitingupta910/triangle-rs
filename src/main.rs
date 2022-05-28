@@ -1,5 +1,6 @@
 use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::{Surface, Swapchain};
+use ash::prelude::VkResult;
 use ash::vk::{
     ComponentSwizzle, Format, ImageSubresourceRange, PhysicalDevice, Pipeline, PipelineLayout,
     Queue, RenderPass, SurfaceFormatKHR, SurfaceKHR, SwapchainKHR,
@@ -18,25 +19,68 @@ use winit::{
 const WINDOW_WIDTH: u32 = 1080;
 const WINDOW_HEIGHT: u32 = 768;
 
-struct PerFrame {}
+struct PerFrame {
+    queue_submit_fence: vk::Fence,
+    primary_command_pool: vk::CommandPool,
+    primary_command_buffer: vk::CommandBuffer,
+    swapchain_acquire_semaphore: vk::Semaphore,
+    swapchain_release_semaphore: vk::Semaphore,
+}
 
 struct Context {
     entry: Entry,
+
+    /// The Vulkan instance.
     instance: Instance,
+
+    /// The Vulkan physical device.
     physical_device: PhysicalDevice,
+
+    /// The Vulkan device.
     device: Device,
+
+    queue: Queue,
+
+    /// The queue family index where graphics work will be submitted.
+    graphics_queue_index: u32,
+
     surface_loader: Surface,
+
+    /// The surface we will render to.
     surface: SurfaceKHR,
+
     surface_resolution: vk::Extent2D,
-    swapchain_loader: Swapchain,
-    swapchain: SwapchainKHR,
-    swapchain_image_views: Vec<vk::ImageView>,
+
     surface_format: Option<SurfaceFormatKHR>,
-    per_frame: Vec<PerFrame>,
-    render_pass: RenderPass,
-    pipeline: Pipeline,
-    pipeline_layout: PipelineLayout,
+
+    swapchain_loader: Swapchain,
+
+    /// The swapchain.
+    swapchain: SwapchainKHR,
+
+    /// The image view for each swapchain image.
+    swapchain_image_views: Vec<vk::ImageView>,
+
+    /// The framebuffer for each swapchain image view.
     swapchain_framebuffers: Vec<vk::Framebuffer>,
+
+    /// The renderpass description.
+    render_pass: RenderPass,
+
+    /// The graphics pipeline.
+    pipeline: Pipeline,
+
+    /**
+     * The pipeline layout for resources.
+     * Not used in this sample, but we still need to provide a dummy one.
+     */
+    pipeline_layout: PipelineLayout,
+
+    /// A set of semaphores that can be reused.
+    recycled_semaphores: Vec<vk::Semaphore>,
+
+    /// A set of per-frame data.
+    per_frame: Vec<PerFrame>,
 }
 
 unsafe extern "system" fn vulkan_debug_callback(
@@ -125,7 +169,7 @@ unsafe fn init_device(
     instance: &Instance,
     surface: &SurfaceKHR,
     surface_fn: &Surface,
-) -> (PhysicalDevice, Device, Queue) {
+) -> (PhysicalDevice, Device, Queue, u32) {
     let pdevices = instance
         .enumerate_physical_devices()
         .expect("Physical device error");
@@ -174,12 +218,37 @@ unsafe fn init_device(
 
     let present_queue = device.get_device_queue(queue_family_index as u32, 0);
 
-    (pdevice, device, present_queue)
+    (pdevice, device, present_queue, queue_family_index as u32)
 }
 
 fn teardown_per_frame(context: &mut Context, frame_index: usize) {}
 
-fn init_per_frame(context: &mut Context, frame_index: usize) {}
+unsafe fn init_per_frame(context: &mut Context, frame_index: usize) {
+    let per_frame = &mut context.per_frame[frame_index];
+
+    let info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+    per_frame.queue_submit_fence = context.device.create_fence(&info, None).unwrap();
+
+    let cmd_pool_info = vk::CommandPoolCreateInfo::builder()
+        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
+        .queue_family_index(context.graphics_queue_index);
+    per_frame.primary_command_pool = context
+        .device
+        .create_command_pool(&cmd_pool_info, None)
+        .unwrap();
+
+    let cmd_buf_info = vk::CommandBufferAllocateInfo::builder()
+        .command_pool(per_frame.primary_command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(1);
+    per_frame.primary_command_buffer = context
+        .device
+        .allocate_command_buffers(&cmd_buf_info)
+        .unwrap()[0];
+
+    per_frame.swapchain_acquire_semaphore = vk::Semaphore::null();
+    per_frame.swapchain_release_semaphore = vk::Semaphore::null();
+}
 
 unsafe fn init_swapchain(context: &mut Context) {
     let surface_format = context
@@ -508,7 +577,7 @@ impl Context {
             let instance = init_instance(&entry, &window);
             let surface = ash_window::create_surface(&entry, &instance, window, None).unwrap();
             let surface_loader = Surface::new(&entry, &instance);
-            let (physical_device, device, queue) =
+            let (physical_device, device, queue, graphics_queue_index) =
                 init_device(&instance, &surface, &surface_loader);
             let swapchain_loader = Swapchain::new(&instance, &device);
 
@@ -517,6 +586,8 @@ impl Context {
                 instance,
                 physical_device,
                 device,
+                queue,
+                graphics_queue_index,
                 surface_loader,
                 surface,
                 surface_resolution: vk::Extent2D::default(),
@@ -529,6 +600,7 @@ impl Context {
                 pipeline: Pipeline::null(),
                 pipeline_layout: PipelineLayout::null(),
                 swapchain_framebuffers: vec![],
+                recycled_semaphores: vec![],
             };
 
             init_swapchain(&mut context);
@@ -538,6 +610,63 @@ impl Context {
             context
         }
     }
+}
+
+unsafe fn acquire_next_image(context: &mut Context) -> VkResult<u32> {
+    let acquire_semaphore = match context.recycled_semaphores.pop() {
+        Some(semaphore) => semaphore,
+        None => {
+            let info = vk::SemaphoreCreateInfo::default();
+            context.device.create_semaphore(&info, None).unwrap()
+        }
+    };
+
+    let image_index = match context.swapchain_loader.acquire_next_image(
+        context.swapchain,
+        u64::MAX,
+        acquire_semaphore,
+        vk::Fence::null(),
+    ) {
+        Ok((image_index, _)) => image_index,
+        Err(e) => {
+            context.recycled_semaphores.push(acquire_semaphore);
+            return Err(e);
+        }
+    };
+
+    // If we have outstanding fences for this swapchain image, wait for them to complete first.
+    // After begin frame returns, it is safe to reuse or delete resources which
+    // were used previously.
+    //
+    // We wait for fences which completes N frames earlier, so we do not stall,
+    // waiting for all GPU work to complete before this returns.
+    // Normally, this doesn't really block at all,
+    // since we're waiting for old frames to have been completed, but just in case.
+    let per_frame = &mut context.per_frame[image_index as usize];
+    let fences = [per_frame.queue_submit_fence];
+    context
+        .device
+        .wait_for_fences(&fences, true, u64::MAX)
+        .unwrap();
+    context.device.reset_fences(&fences).unwrap();
+
+    context
+        .device
+        .reset_command_pool(
+            per_frame.primary_command_pool,
+            vk::CommandPoolResetFlags::empty(),
+        )
+        .unwrap();
+
+    // Recycle the old semaphore back into the semaphore manager.
+    let old_semaphore = per_frame.swapchain_acquire_semaphore;
+    if old_semaphore != vk::Semaphore::null() {
+        context.recycled_semaphores.push(old_semaphore);
+    }
+
+    per_frame.swapchain_acquire_semaphore = acquire_semaphore;
+
+    Ok(image_index)
 }
 
 fn main() {
