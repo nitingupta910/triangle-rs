@@ -19,14 +19,6 @@ use winit::{
 const WINDOW_WIDTH: u32 = 1080;
 const WINDOW_HEIGHT: u32 = 768;
 
-struct PerFrame {
-    queue_submit_fence: vk::Fence,
-    primary_command_pool: vk::CommandPool,
-    primary_command_buffer: vk::CommandBuffer,
-    swapchain_acquire_semaphore: vk::Semaphore,
-    swapchain_release_semaphore: vk::Semaphore,
-}
-
 struct Context {
     entry: Entry,
 
@@ -221,33 +213,76 @@ unsafe fn init_device(
     (pdevice, device, present_queue, queue_family_index as u32)
 }
 
-fn teardown_per_frame(context: &mut Context, frame_index: usize) {}
+struct PerFrame {
+    queue_submit_fence: vk::Fence,
+    primary_command_pool: vk::CommandPool,
+    primary_command_buffer: vk::CommandBuffer,
+    swapchain_acquire_semaphore: vk::Semaphore,
+    swapchain_release_semaphore: vk::Semaphore,
+}
 
-unsafe fn init_per_frame(context: &mut Context, frame_index: usize) {
-    let per_frame = &mut context.per_frame[frame_index];
+impl PerFrame {
+    unsafe fn new(context: &Context) -> PerFrame {
+        let info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+        let queue_submit_fence = context.device.create_fence(&info, None).unwrap();
 
-    let info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-    per_frame.queue_submit_fence = context.device.create_fence(&info, None).unwrap();
+        let cmd_pool_info = vk::CommandPoolCreateInfo::builder()
+            .flags(vk::CommandPoolCreateFlags::TRANSIENT)
+            .queue_family_index(context.graphics_queue_index);
+        let primary_command_pool = context
+            .device
+            .create_command_pool(&cmd_pool_info, None)
+            .unwrap();
 
-    let cmd_pool_info = vk::CommandPoolCreateInfo::builder()
-        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
-        .queue_family_index(context.graphics_queue_index);
-    per_frame.primary_command_pool = context
+        let cmd_buf_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(primary_command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+        let primary_command_buffer = context
+            .device
+            .allocate_command_buffers(&cmd_buf_info)
+            .unwrap()[0];
+
+        let swapchain_acquire_semaphore = vk::Semaphore::null();
+        let swapchain_release_semaphore = vk::Semaphore::null();
+
+        PerFrame {
+            queue_submit_fence,
+            primary_command_pool,
+            primary_command_buffer,
+            swapchain_acquire_semaphore,
+            swapchain_release_semaphore,
+        }
+    }
+}
+
+unsafe fn teardown_per_frame(context: &mut Context, frame_index: usize) {
+    let mut per_frame = &mut context.per_frame[frame_index];
+
+    context
         .device
-        .create_command_pool(&cmd_pool_info, None)
-        .unwrap();
+        .destroy_fence(per_frame.queue_submit_fence, None);
+    per_frame.queue_submit_fence = vk::Fence::null();
 
-    let cmd_buf_info = vk::CommandBufferAllocateInfo::builder()
-        .command_pool(per_frame.primary_command_pool)
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(1);
-    per_frame.primary_command_buffer = context
-        .device
-        .allocate_command_buffers(&cmd_buf_info)
-        .unwrap()[0];
+    context.device.free_command_buffers(
+        per_frame.primary_command_pool,
+        &[per_frame.primary_command_buffer],
+    );
+    per_frame.primary_command_buffer = vk::CommandBuffer::null();
 
-    per_frame.swapchain_acquire_semaphore = vk::Semaphore::null();
-    per_frame.swapchain_release_semaphore = vk::Semaphore::null();
+    if per_frame.swapchain_acquire_semaphore != vk::Semaphore::null() {
+        context
+            .device
+            .destroy_semaphore(per_frame.swapchain_acquire_semaphore, None);
+        per_frame.swapchain_acquire_semaphore = vk::Semaphore::null();
+    }
+
+    if per_frame.swapchain_release_semaphore != vk::Semaphore::null() {
+        context
+            .device
+            .destroy_semaphore(per_frame.swapchain_release_semaphore, None);
+        per_frame.swapchain_release_semaphore = vk::Semaphore::null();
+    }
 }
 
 unsafe fn init_swapchain(context: &mut Context) {
@@ -345,7 +380,7 @@ unsafe fn init_swapchain(context: &mut Context) {
     context.per_frame.reserve(image_count);
 
     for i in 0..image_count {
-        init_per_frame(context, i);
+        context.per_frame.push(PerFrame::new(context));
     }
 
     for i in 0..image_count {
